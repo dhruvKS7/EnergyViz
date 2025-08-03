@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Narrative Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            background-color: #f8f9fac9;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2em;
+            margin: 30px 0 20px;
+            color: black;
+        }
+
+        #chart {
+            display: block;
+            margin: 0 auto;
+            background-color: white;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .line {
+            fill: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .bold-line {
+            pointer-events: none;
+        }
+
+        .boldest-line {
+            stroke-width: 6.5;
+        }
+
+        .axis-label {
+            font-size: 20px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: #fff;
+            border: 1px solid #ccc;
+            padding: 6px;
+            font-size: 13px;
+            pointer-events: none;
+            box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
+            text-align: left;
+        }
+
+        .annotation {
+            font-size: 16px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .annotation-background {
+            fill: rgb(255, 255, 255);
+            stroke: gray;
+            stroke-width: 2;
+            rx: 4;
+            ry: 4;
+        }
+
+        .annotation-text {
+            fill: black;
+            font-weight: 500;
+        }
+
+        .annotation-line {
+            stroke: gray;
+            stroke-width: 3;
+            stroke-dasharray: 4, 4;
+            opacity: 0.7;
+        }
+
+        .annotation-circle {
+            fill: none;
+            stroke: red;
+            stroke-width: 3;
+            opacity: 0.8;
+        }
+
+        #legend {
+            margin: 20px auto 40px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            max-width: 960px;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 12px;
+            font-size: 16px;
+            line-height: 1;
+            vertical-align: middle;
+        }
+
+        .legend-checkbox {
+            display: none;
+        }
+
+        .custom-checkbox {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background-color: var(--fuel-color);
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .legend-checkbox:checked+.custom-checkbox::after {
+            content: "";
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            width: 6px;
+            height: 10px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: translate(-50%, -50%) rotate(45deg);
+        }
+
+        .legend-label {
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        #instructions {
+            padding-bottom: 20px;
+        }
+
+        .navigation-container {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .nav-arrow {
+            font-size: 24px;
+            padding: 10px 20px;
+            cursor: pointer;
+            background: none;
+            border: 2px solid black;
+            border-radius: 8px;
+            color: black;
+            transition: opacity 0.3s ease;
+        }
+
+        .nav-arrow:disabled {
+            opacity: 0.3;
+            border-color: gray;
+            color: gray;
+            cursor: default;
+        }
+
+        .button-container {
+            display: none;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .scene-button {
+            padding: 8px 16px;
+            margin: 4px;
+            border: none;
+            border-radius: 6px;
+            background-color: #e0e0e0;
+            cursor: pointer;
+            color: black;
+        }
+
+        .scene-button.active {
+            font-weight: bold;
+            background-color: black;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>U.S. Fuel Net Generation (All Sectors)</h1>
+    <div id="instructions" style="display: none">Explore different time ranges, filter fuel types, and hover over
+        bolded regions for more information!</div>
+    <div class="navigation-container">
+        <button id="left-arrow" class="nav-arrow" disabled>&larr;</button>
+        <button id="right-arrow" class="nav-arrow">&rarr;</button>
+    </div>
+    <div class="button-container" style="display: none;">
+        <button class="scene-button" data-scene="1">2001-2008</button>
+        <button class="scene-button" data-scene="2">2008-2016</button>
+        <button class="scene-button" data-scene="3">2016-2023</button>
+        <button class="scene-button active overview" data-scene="4">Overview</button>
+        <button class="scene-button" data-scene="-1">Restart</button>
+    </div>
+    <svg id="chart" width="960" height="500"></svg>
+    <div id="legend"></div>
+
+    <script>
+        const sceneRanges = {
+            1: [2001, 2008],
+            2: [2001, 2016],
+            3: [2001, 2023],
+            4: [2001, 2023],
+            5: [2001, 2023]
+        };
+
+        const sceneBold = {
+            1: [2001, 2008],
+            2: [2008, 2016],
+            3: [2016, 2023],
+            4: [2001, 2023],
+            5: [2001, 2023]
+        };
+
+        const sceneAnnotations = {
+            1: [
+                {
+                    yearStart: 2001,
+                    yearEnd: 2008,
+                    fuel: "coal",
+                    text: "Coal dominates early 2000s",
+                    offsetX: 100,
+                    offsetY: 30,
+                    anchor: "end"
+                },
+                {
+                    yearStart: 2006,
+                    yearEnd: 2006,
+                    fuel: "natural-gas",
+                    text: "2006: Natural gas overtakes\nnuclear in fuel generation",
+                    offsetX: 60,
+                    offsetY: 50,
+                    anchor: "start"
+                }
+            ],
+            2: [
+                {
+                    yearStart: 2016,
+                    yearEnd: 2016,
+                    fuel: "natural-gas",
+                    text: "2016: Natural gas becomes the first\nfuel to overtake coal in generation",
+                    offsetX: -80,
+                    offsetY: -6,
+                    anchor: "end"
+                },
+                {
+                    yearStart: 2014,
+                    yearEnd: 2014,
+                    fuel: "all-solar",
+                    text: "2014: Solar has its first year of\nmajor generation, with combined\nrenewables showing steady growth",
+                    offsetX: 90,
+                    offsetY: -60,
+                    anchor: "start"
+                }
+            ],
+            3: [
+                {
+                    yearStart: 2016,
+                    yearEnd: 2023,
+                    fuel: "natural-gas",
+                    text: "Natural gas continues its climb\nas the largest fuel generator",
+                    offsetX: -50,
+                    offsetY: -55,
+                    anchor: "middle"
+                },
+                {
+                    yearStart: 2019,
+                    yearEnd: 2019,
+                    fuel: "coal",
+                    text: "2018-20: Coal experiences\nits sharpest declines so far",
+                    offsetX: -50,
+                    offsetY: -7,
+                    anchor: "end"
+                },
+                {
+                    yearStart: 2022,
+                    yearEnd: 2022,
+                    fuel: "combined-renewables",
+                    text: "2022: Combined renewables\novertake coal in generation\nfor the first time",
+                    offsetX: 0,
+                    offsetY: -105,
+                    anchor: "middle"
+                }
+            ],
+            4: [
+                {
+                    yearStart: 2007,
+                    yearEnd: 2023,
+                    fuel: "all-fuel",
+                    text: "Overall generation remains largely\nstable from 2007 to 2023",
+                    offsetX: 0,
+                    offsetY: 50,
+                    anchor: "middle"
+                }
+            ]
+        };
+
+        const fuelColors = {
+            "all-fuel": "#e41a1c",
+            "coal": "#377eb8",
+            "natural-gas": "#4daf4a",
+            "conventional-hydroelectric": "#984ea3",
+            "wind": "#ff7f00",
+            "all-solar": "#1b9e77",
+            "nuclear": "#a65628",
+            "combined-renewables": "#f781bf"
+        };
+
+        const fuelNames = {
+            "all-fuel": "All Fuels",
+            "coal": "Coal",
+            "natural-gas": "Natural Gas",
+            "conventional-hydroelectric": "Hydroelectric",
+            "wind": "Wind",
+            "all-solar": "Solar",
+            "nuclear": "Nuclear",
+            "combined-renewables": "Combined Renewables (Hydroelectric + Wind + Solar)"
+        };
+
+        const svg = d3.select("#chart"),
+            margin = { top: 50, right: 80, bottom: 50, left: 80 },
+            width = +svg.attr("width") - margin.left - margin.right,
+            height = +svg.attr("height") - margin.top - margin.bottom;
+
+        const chartGroup = svg.append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const annotationGroup = chartGroup.append("g").attr("class", "annotations");
+
+        let xScale = d3.scaleLinear().range([0, width]),
+            yScale = d3.scaleLinear().range([height, 0]),
+            xAxis = d3.axisBottom(xScale).tickFormat(d3.format("d")),
+            yAxis = d3.axisLeft(yScale).ticks(10, "~s");
+
+        chartGroup.append("g")
+            .attr("class", "x-axis")
+            .attr("transform", `translate(0,${height})`);
+
+        chartGroup.append("text")
+            .attr("class", "x-axis-label")
+            .attr("x", width / 2)
+            .attr("y", height + margin.bottom - 10)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "17px")
+            .text("Year");
+
+        chartGroup.append("g")
+            .attr("class", "y-axis");
+
+        chartGroup.append("text")
+            .attr("class", "y-axis-label")
+            .attr("transform", "rotate(-90)")
+            .attr("x", -height / 2)
+            .attr("y", -margin.left + 30)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "17px")
+            .text("Net Generation (kMWh)");
+
+        const tooltip = d3.select("body").append("div").attr("class", "tooltip").style("display", "none");
+        let dataByFuel = {};
+        let dataByAllFuel = {};
+        let allData = {};
+        let fuels = [];
+        let allFuel = [];
+        let allFuels = [];
+        let currentScene = 1;
+        let final = false;
+
+        function createAnnotations(scene) {
+            annotationGroup.selectAll("*").remove();
+            const annotations = sceneAnnotations[scene] || [];
+            annotations.forEach((annotation, i) => {
+                createAnnotation(annotation, i);
+            });
+        }
+
+        function createAnnotation(annotation, index) {
+            const { yearStart, yearEnd, fuel, text, offsetX, offsetY, anchor } = annotation;
+
+            const startData = allData[fuel]?.find(d => d.year === yearStart);
+            const endData = allData[fuel]?.find(d => d.year === yearEnd);
+            if (!startData || !endData) return;
+
+            const x1 = xScale(yearStart);
+            const y1 = yScale(startData.value);
+            const x2 = xScale(yearEnd);
+            const y2 = yScale(endData.value);
+
+            const midX = (x1 + x2) / 2;
+            const midY = (y1 + y2) / 2;
+
+            const annGroup = annotationGroup.append("g")
+                .attr("class", "annotation");
+
+            if (yearStart == yearEnd) {
+                annGroup.attr("transform", `translate(${x1}, ${y1})`);
+                annGroup.append("circle")
+                    .attr("class", "annotation-circle")
+                    .attr("r", 8)
+                    .attr("cx", 0)
+                    .attr("cy", 0);
+            } else {
+                annGroup.append("line")
+                    .attr("class", "annotation-line")
+                    .attr("x1", x1)
+                    .attr("y1", y1)
+                    .attr("x2", x2)
+                    .attr("y2", y2)
+                    .style("stroke-width", 4)
+                    .style("stroke", fuelColors[fuel])
+                    .style("opacity", 0.5);
+            }
+
+            const textGroup = yearStart != yearEnd ? annGroup.append("g")
+                .attr("transform", `translate(${midX + offsetX}, ${midY + offsetY})`) : annGroup.append("g")
+                    .attr("transform", `translate(${offsetX}, ${offsetY})`);
+
+            const textElement = textGroup.append("text")
+                .attr("class", "annotation-text")
+                .attr("text-anchor", anchor)
+                .attr("dominant-baseline", "middle")
+                ;
+
+            const lines = text.split('\n');
+            lines.forEach((line, i) => {
+                textElement.append("tspan")
+                    .attr("x", 0)
+                    .attr("dy", i === 0 ? 0 : "1.2em")
+                    .text(line);
+            });
+
+            const bbox = textElement.node().getBBox();
+            const padding = 5;
+
+            textGroup.insert("rect", "text")
+                .attr("class", "annotation-background")
+                .attr("x", bbox.x - padding)
+                .attr("y", bbox.y - padding)
+                .attr("width", bbox.width + 2 * padding)
+                .attr("height", bbox.height + 2 * padding);
+
+
+            if (yearStart == yearEnd) {
+                if (Math.abs(offsetX) > 10 || Math.abs(offsetY) > 10) {
+                    annGroup.append("line")
+                        .attr("class", "annotation-line")
+                        .attr("x1", 0)
+                        .attr("y1", 0)
+                        .attr("x2", offsetX * 0.9)
+                        .attr("y2", offsetY * 0.5);
+                }
+            }
+
+            annGroup.transition()
+                .delay(800 + index * 200)
+                .duration(600)
+                .style("opacity", 1);
+        }
+
+        d3.csv("total_generations.csv", d3.autoType)
+            .then(data => {
+
+                fuels = Object.keys(data[0]).filter(key => key !== "year" && key !== "all-fuel");
+                allFuel = ["all-fuel"];
+                allFuels = Object.keys(data[0]).filter(key => key !== "year");
+
+                allFuel.forEach(fuel => {
+                    dataByAllFuel[fuel] = data.map(d => ({
+                        year: d.year,
+                        value: d[fuel]
+                    }));
+                });
+
+                fuels.forEach(fuel => {
+                    dataByFuel[fuel] = data.map(d => ({
+                        year: d.year,
+                        value: d[fuel]
+                    }));
+                });
+
+                allFuels.forEach(fuel => {
+                    allData[fuel] = data.map(d => ({
+                        year: d.year,
+                        value: d[fuel]
+                    }));
+                });
+
+                xScale.domain(d3.extent(data, d => d.year));
+                chartGroup.select(".x-axis").call(xAxis);
+
+                createLegend(allFuels);
+                updateScene(1);
+
+                d3.selectAll(".scene-button").on("click", function () {
+                    const scene = +d3.select(this).attr("data-scene");
+                    d3.selectAll(".scene-button").classed("active", false);
+                    if (scene == -1) {
+                        // window.location.reload();
+                        final = false;
+                        d3.selectAll(".legend-checkbox").property("checked", true);
+                        updateScene(1);
+                        d3.select(".overview").classed("active", true);
+                    } else {
+                        updateScene(scene);
+                        d3.select(this).classed("active", true);
+                    }
+                });
+                d3.select("#left-arrow").on("click", () => {
+                    if (currentScene > 1) {
+                        updateScene(currentScene - 1);
+                    }
+                });
+
+                d3.select("#right-arrow").on("click", () => {
+                    if (currentScene < 5) {
+                        updateScene(currentScene + 1);
+                    }
+                });
+            });
+
+        function createLegend(fuels) {
+            const legend = d3.select("#legend");
+            legend.selectAll("label")
+                .data(fuels)
+                .enter()
+                .append("label")
+                .attr("class", "legend-item")
+                .html(fuel => `
+                <span class="legend-circle" style="
+                    display: inline-block;
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 50%;
+                    background-color: ${fuelColors[fuel]};
+                    vertical-align: middle;
+                    margin-right: 6px;
+                "></span>
+                <input type="checkbox" class="legend-checkbox" checked data-fuel="${fuel}">
+                <span class="custom-checkbox" style="--fuel-color: ${fuelColors[fuel]}"></span>
+                <span class="legend-label" style="color: ${fuelColors[fuel]}">${fuelNames[fuel]}</span>
+            `);
+
+            legend.selectAll("input").on("change", () => {
+                updateScene(currentScene);
+            });
+        }
+
+        function updateScene(sceneNumber) {
+            currentScene = sceneNumber;
+            const [rangeStart, rangeEnd] = sceneRanges[sceneNumber];
+            const [boldStart, boldEnd] = sceneBold[sceneNumber];
+            if (!(sceneNumber === 5 && !final)) {
+                chartGroup.selectAll(".line").remove();
+                chartGroup.selectAll(".bold-line").remove();
+                chartGroup.selectAll(".boldest-line").remove();
+            } else {
+                annotationGroup.selectAll("*").remove();
+            }
+            tooltip.style("display", "none");
+            if (sceneNumber === 5) {
+                final = true;
+            }
+
+            d3.selectAll("#legend .legend-circle")
+                .style("display", final ? "none" : "inline-block");
+
+            d3.selectAll("#legend .custom-checkbox")
+                .style("display", final ? "inline-block" : "none");
+
+            d3.selectAll("#instructions")
+                .style("display", final ? "inline-block" : "none");
+
+
+            let visibleFuels = allFuels.filter(fuel => d3.select(`input[data-fuel="${fuel}"]`).property("checked"));
+            let yMax = d3.max(
+                visibleFuels.map(fuel =>
+                    d3.max(allData[fuel], d => d.value)
+                )
+            );
+            if (!final) {
+                if (sceneNumber == 4) {
+                    yMax = d3.max(
+                        allFuel.map(f =>
+                            d3.max(dataByAllFuel[f], d => d.value)
+                        )
+                    );
+                } else {
+                    yMax = d3.max(
+                        fuels.map(f =>
+                            d3.max(dataByFuel[f], d => d.value)
+                        )
+                    );
+                }
+            }
+            yScale.domain([0, yMax]);
+            yAxis = d3.axisLeft(yScale).ticks(10, "~s");
+
+            const line = d3.line()
+                .x(d => xScale(d.year))
+                .y(d => yScale(d.value));
+
+            chartGroup.select(".y-axis").transition().duration(500).call(yAxis);
+
+            let fullData = {};
+            for (const fuel of visibleFuels) {
+                if (!final && fuel === "all-fuel" && sceneNumber < 4) continue;
+                fullData[fuel] = allData[fuel];
+            }
+
+            Object.entries(fullData).forEach(([fuel, fuelData]) => {
+                const pathData = fuelData.filter(d => d.year >= rangeStart && d.year <= rangeEnd && d.value > 0 && !isNaN(d.value));
+
+                const path = chartGroup.append("path")
+                    .datum(pathData)
+                    .attr("class", "boldest-line")
+                    .attr("fill", "none")
+                    .attr("opacity", 0)
+                    .attr("pointer-events", "stroke")
+                    .attr("d", line);
+
+                const dimmedSegment = fuelData.filter(d =>
+                    d.year >= rangeStart &&
+                    d.year <= rangeEnd &&
+                    d.year <= boldStart &&
+                    d.value > 0 &&
+                    !isNaN(d.value)
+                );
+
+                if (dimmedSegment.length > 1) {
+                    chartGroup.append("path")
+                        .datum(dimmedSegment)
+                        .attr("class", "line")
+                        .attr("data-fuel-dim", fuel)
+                        .attr("fill", "none")
+                        .attr("stroke", fuelColors[fuel])
+                        .attr("stroke-width", 2.5)
+                        .attr("opacity", 0.4)
+                        .attr("d", line);
+                }
+
+                const boldSegment = fuelData.filter(d =>
+                    d.year >= boldStart && d.year <= boldEnd && d.value > 0 && !isNaN(d.value)
+                );
+
+                if (boldSegment.length > 1) {
+                    chartGroup.append("path")
+                        .datum(boldSegment)
+                        .attr("class", "bold-line")
+                        .attr("data-fuel-bold", fuel)
+                        .attr("fill", "none")
+                        .attr("stroke", fuelColors[fuel])
+                        .attr("stroke-width", 4.5)
+                        .attr("d", line)
+                        .attr("stroke-dasharray", function () {
+                            return this.getTotalLength();
+                        })
+                        .attr("stroke-dashoffset", function () {
+                            return this.getTotalLength();
+                        })
+                        .transition()
+                        .duration(1000)
+                        .ease(d3.easeLinear)
+                        .attr("stroke-dashoffset", 0);
+                }
+
+                if (final) {
+                    path
+                        .on("mouseover", function () {
+                            chartGroup.selectAll(`path[data-fuel-dim='${fuel}']`).raise().attr("stroke-width", 4.5).attr("opacity", 0.55);
+                            chartGroup.selectAll(`path[data-fuel-bold='${fuel}']`).raise().attr("stroke-width", 6.5);
+                        })
+                        .on("mousemove", function (event) {
+                            const [x] = d3.pointer(event);
+                            const year = Math.round(xScale.invert(x));
+                            const idx = fuelData.findIndex(d => d.year === year);
+                            if (idx !== -1 && year >= boldStart && year <= boldEnd) {
+                                const d = fuelData[idx];
+                                const prev = fuelData[idx - 1];
+                                const pct = prev ? ((d.value - prev.value) / prev.value * 100).toFixed(1) : "null";
+                                tooltip
+                                    .style("display", "block")
+                                    .style("left", `${event.pageX + 10}px`)
+                                    .style("top", `${event.pageY - 20}px`)
+                                    .html(`
+                                    <strong>${fuelNames[fuel]}</strong><br/>
+                                    Year: ${d.year}<br/>
+                                    ${d.value.toLocaleString()} kMWh<br/>
+                                    ${prev ? `${Math.abs(pct)}% ${pct < 0 ? "decrease" : "increase"} from ${year - 1}` : ""}
+                                `);
+                            }
+                        })
+                        .on("mouseout", function () {
+                            chartGroup.selectAll(`path[data-fuel-dim='${fuel}']`).raise().attr("stroke-width", 2.5).attr("opacity", 0.4);
+                            chartGroup.selectAll(`path[data-fuel-bold='${fuel}']`).raise().attr("stroke-width", 4.5);
+                            tooltip.style("display", "none");
+                        });
+                }
+            });
+
+            if (!final) {
+                createAnnotations(sceneNumber);
+            }
+
+            d3.select(".navigation-container").style("display", final ? "none" : "flex");
+            d3.select(".button-container").style("display", final ? "flex" : "none");
+
+            d3.select("#left-arrow").attr("disabled", sceneNumber === 1 ? true : null);
+        }
+
+    </script>
+
+</body>
+
+</html>
